@@ -411,6 +411,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      increment_report_count: { Args: { _id: string }; Returns: undefined }
       set_report_status: {
         Args: {
           _after_photo?: string
