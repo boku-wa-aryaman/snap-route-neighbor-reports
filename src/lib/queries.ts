@@ -14,7 +14,7 @@ export const publicReportsQuery = queryOptions({
   },
 });
 
-export type PublicReport = NonNullable<Awaited<ReturnType<typeof publicReportsQuery.queryFn>>>[number];
+export type PublicReport = import("@/integrations/supabase/types").Database["public"]["Views"]["public_reports"]["Row"];
 
 export const reportQuery = (ticketId: string) =>
   queryOptions({

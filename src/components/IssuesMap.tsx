@@ -21,9 +21,9 @@ function FitBounds({ pins }: { pins: Pin[] }) {
   return null;
 }
 
-export default function IssuesMap({ pins, className }: { pins: Pin[]; className?: string }) {
+export default function IssuesMap({ pins, className }: { pins: Pin[]; className?: string | undefined }) {
   return (
-    <MapContainer center={[22.5, 79]} zoom={4} className={className} scrollWheelZoom={false}>
+    <MapContainer center={[22.5, 79]} zoom={4} className={className ?? ""} scrollWheelZoom={false}>
       <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
       <FitBounds pins={pins} />
       {pins.map((p) => (
@@ -72,10 +72,10 @@ export function PickerMap({
 }: {
   value: { lat: number; lon: number } | null;
   onPick: (lat: number, lon: number) => void;
-  className?: string;
+  className?: string | undefined;
 }) {
   return (
-    <MapContainer center={value ? [value.lat, value.lon] : [22.5, 79]} zoom={value ? 16 : 4} className={className}>
+    <MapContainer center={value ? [value.lat, value.lon] : [22.5, 79]} zoom={value ? 16 : 4} className={className ?? ""}>
       <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
       <ClickToPick onPick={onPick} />
       {value && (

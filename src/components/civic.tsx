@@ -34,7 +34,7 @@ const STATUS: Record<string, { label: string; cls: string }> = {
 };
 
 export function StatusBadge({ status }: { status: string }) {
-  const s = STATUS[status] ?? STATUS.open;
+  const s = STATUS[status] ?? STATUS["open"]!;
   return <span className={cn("inline-flex rounded-sm border px-2 py-0.5 text-xs font-medium", s.cls)}>{s.label}</span>;
 }
 

@@ -4,7 +4,7 @@ import { ClientOnly } from "@tanstack/react-router";
 const IssuesMapImpl = lazy(() => import("./IssuesMap"));
 const PickerMapImpl = lazy(() => import("./IssuesMap").then((m) => ({ default: m.PickerMap })));
 
-const Fallback = ({ className }: { className?: string }) => <div className={`animate-pulse bg-muted ${className ?? ""}`} />;
+const Fallback = ({ className }: { className?: string | undefined }) => <div className={`animate-pulse bg-muted ${className ?? ""}`} />;
 
 export function IssuesMap(props: ComponentProps<typeof IssuesMapImpl>) {
   return (

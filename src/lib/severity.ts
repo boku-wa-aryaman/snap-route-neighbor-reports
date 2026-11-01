@@ -106,7 +106,7 @@ export function computeSeverity(f: SeverityFeatures): { score: number; reasons: 
 export const SLA_HOURS: Record<number, number> = { 5: 24, 4: 48, 3: 72, 2: 168, 1: 336 };
 
 export function slaDeadline(score: number, from: Date = new Date()): Date {
-  return new Date(from.getTime() + SLA_HOURS[score] * 3600_000);
+  return new Date(from.getTime() + (SLA_HOURS[score] ?? 336) * 3600_000);
 }
 
 export const REVIEW_CONFIDENCE_THRESHOLD = 0.6;
