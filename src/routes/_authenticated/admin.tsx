@@ -5,6 +5,9 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { CATEGORIES, CATEGORY_LABELS } from "@/lib/severity";
 import { EmptyState, ReportPhoto, SeverityBadge, SlaCountdown, StatusBadge } from "@/components/civic";
+import { LocationFilter } from "@/components/LocationFilter";
+import { ANY_LOCATION, locationOf, matchesLocation } from "@/lib/location";
+import { LIVE_REFRESH_MS, isActive } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -19,7 +22,7 @@ const adminReportsQuery = queryOptions({
   queryFn: async () => {
     const { data, error } = await supabase
       .from("reports")
-      .select("id, ticket_id, category, description, ai_summary, ai_json, ai_confidence, severity, severity_override, status, needs_review, review_reason, duplicate_of, report_count, sla_deadline, photo_url, area_name, city, created_at, deleted_at, deleted_reason")
+      .select("id, ticket_id, category, description, ai_summary, ai_json, ai_confidence, severity, severity_override, status, needs_review, review_reason, duplicate_of, report_count, sla_deadline, photo_url, area_name, city, live_context, created_at, deleted_at, deleted_reason")
       .order("created_at", { ascending: false })
       .limit(500);
     if (error) throw error;
@@ -39,13 +42,16 @@ function classifierOf(r: Row) {
 function Admin() {
   const { isAdmin, loading } = useAuth();
   const qc = useQueryClient();
-  const { data = [], isLoading } = useQuery({ ...adminReportsQuery, enabled: isAdmin, refetchInterval: 20_000 });
-  const [tab, setTab] = useState<"review" | "active" | "all" | "deleted">("review");
+  const { data: all = [], isLoading } = useQuery({ ...adminReportsQuery, enabled: isAdmin, refetchInterval: LIVE_REFRESH_MS });
+  const [tab, setTab] = useState<"review" | "active" | "all" | "deleted" | "team">("review");
+  const [loc, setLoc] = useState(ANY_LOCATION);
+  const locs = useMemo(() => all.filter((r) => !r.deleted_at && !r.duplicate_of).map(locationOf), [all]);
+  const data = useMemo(() => all.filter((r) => matchesLocation(locationOf(r), loc)), [all, loc]);
   const [openId, setOpenId] = useState<string | null>(null);
 
   const counts = useMemo(() => ({
-    review: data.filter((r) => !r.deleted_at && r.needs_review && r.status !== "resolved" && r.status !== "rejected").length,
-    active: data.filter((r) => !r.deleted_at && r.status !== "resolved" && r.status !== "rejected").length,
+    review: data.filter((r) => !r.deleted_at && r.needs_review && isActive(r)).length,
+    active: data.filter((r) => !r.deleted_at && isActive(r)).length,
     all: data.filter((r) => !r.deleted_at).length,
     deleted: data.filter((r) => r.deleted_at).length,
   }), [data]);
@@ -54,8 +60,7 @@ function Admin() {
     if (tab === "deleted") return !!r.deleted_at;
     if (r.deleted_at) return false;
     if (tab === "all") return true;
-    const active = r.status !== "resolved" && r.status !== "rejected";
-    return tab === "active" ? active : active && r.needs_review;
+    return tab === "active" ? isActive(r) : isActive(r) && r.needs_review;
   }).sort((a, b) => (b.severity_override ?? b.severity) - (a.severity_override ?? a.severity)), [data, tab]);
 
   async function run(p: PromiseLike<{ error: { message: string } | null }>, ok: string) {
@@ -65,14 +70,14 @@ function Admin() {
       return;
     }
     toast.success(ok);
-    qc.invalidateQueries({ queryKey: ["admin_reports"] });
-    qc.invalidateQueries({ queryKey: ["public_reports"] });
+    // Refresh every page's data (public list, ticket pages, change log), not just this one.
+    qc.invalidateQueries();
   }
 
   if (!loading && !isAdmin)
     return <div className="mx-auto max-w-6xl px-4 py-10"><EmptyState title="Admins only">Ask a team admin to grant you the admin role.</EmptyState></div>;
 
-  const tabBtn = (k: typeof tab, label: string) => (
+  const tabBtn = (k: Exclude<typeof tab, "team">, label: string) => (
     <button
       key={k}
       onClick={() => setTab(k)}
@@ -97,6 +102,21 @@ function Admin() {
         {tabBtn("active", "Active")}
         {tabBtn("all", "All")}
         {tabBtn("deleted", "Deleted")}
+        <button
+          onClick={() => setTab("team")}
+          className={`rounded-sm border px-3 py-1.5 text-sm ${tab === "team" ? "border-primary bg-primary text-primary-foreground" : "bg-card text-muted-foreground hover:text-foreground"}`}
+        >
+          Team & roles
+        </button>
+      </div>
+
+      {tab === "team" ? (
+        <Team run={run} />
+      ) : (
+      <>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="text-sm text-muted-foreground">Location</span>
+        <LocationFilter locs={locs} value={loc} onChange={setLoc} />
       </div>
 
       {!isLoading && rows.length === 0 ? (
@@ -132,6 +152,8 @@ function Admin() {
             );
           })}
         </div>
+      )}
+      </>
       )}
     </div>
   );
@@ -201,6 +223,84 @@ function Editor({ r, clf, run }: {
             </Button>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Admins can read every profile and role row (RLS), and change roles only through
+// admin_set_role, which re-checks admin server-side and writes to the audit log.
+const teamQuery = queryOptions({
+  queryKey: ["team"],
+  queryFn: async () => {
+    const [{ data: people, error }, { data: roles }] = await Promise.all([
+      supabase.from("profiles").select("id, display_name, email, created_at").order("created_at"),
+      supabase.from("user_roles").select("user_id, role"),
+    ]);
+    if (error) throw error;
+    const byUser = new Map<string, string[]>();
+    for (const r of roles ?? []) byUser.set(r.user_id, [...(byUser.get(r.user_id) ?? []), r.role]);
+    return (people ?? []).map((p) => ({ ...p, roles: byUser.get(p.id) ?? [] }));
+  },
+});
+
+const ROLE_TEXT: Record<"official" | "admin", string> = { official: "Official", admin: "Admin" };
+
+function Team({ run }: { run: (p: PromiseLike<{ error: { message: string } | null }>, ok: string) => Promise<unknown> }) {
+  const { session } = useAuth();
+  const { data = [], isLoading } = useQuery(teamQuery);
+  const [q, setQ] = useState("");
+  const people = data.filter((p) => !q || `${p.display_name} ${p.email}`.toLowerCase().includes(q.toLowerCase()));
+
+  return (
+    <div className="mt-4">
+      <div className="rounded-md border bg-card p-4 text-sm shadow-card">
+        <p><b>Citizen</b>: every new account. Can file reports and see their own.</p>
+        <p className="mt-1"><b>Official</b>: sees the Dashboard and can mark tickets In progress or Resolved.</p>
+        <p className="mt-1"><b>Admin</b>: everything, including this page, review, edits, deletes and roles.</p>
+        <p className="mt-2 text-muted-foreground">People create their own account on the sign-in page; promote them here. Every change is in the audit log.</p>
+      </div>
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search name or email"
+        className="mt-4 h-9 w-full max-w-xs rounded-sm border bg-card px-2 text-sm"
+      />
+      <div className="mt-3 overflow-x-auto rounded-md border bg-card shadow-card">
+        <table className="w-full text-sm">
+          <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
+            <tr><th className="p-3">Person</th><th className="p-3">Roles</th><th className="p-3">Joined</th><th className="p-3 text-right">Change role</th></tr>
+          </thead>
+          <tbody className="divide-y">
+            {people.map((p) => (
+              <tr key={p.id}>
+                <td className="p-3"><p className="font-medium">{p.display_name ?? "—"}</p><p className="text-xs text-muted-foreground">{p.email}</p></td>
+                <td className="p-3">
+                  <div className="flex flex-wrap gap-1">
+                    {p.roles.map((r) => <span key={r} className="rounded-sm border px-1.5 py-0.5 text-xs">{r}</span>)}
+                  </div>
+                </td>
+                <td className="p-3 font-mono text-xs text-muted-foreground">{new Date(p.created_at).toLocaleDateString()}</td>
+                <td className="p-3">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {(["official", "admin"] as const).map((role) => {
+                      const has = p.roles.includes(role);
+                      const self = role === "admin" && has && p.id === session?.user.id;
+                      return (
+                        <Button key={role} size="sm" variant={has ? "outline" : "default"} disabled={self}
+                          title={self ? "You can't remove your own admin role" : undefined}
+                          onClick={() => run(supabase.rpc("admin_set_role", { _user_id: p.id, _role: role, _grant: !has }), `${p.display_name ?? p.email}: ${has ? "removed" : "made"} ${ROLE_TEXT[role].toLowerCase()}`)}>
+                          {has ? `Remove ${ROLE_TEXT[role].toLowerCase()}` : `Make ${ROLE_TEXT[role].toLowerCase()}`}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!isLoading && people.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">No accounts match.</p>}
       </div>
     </div>
   );

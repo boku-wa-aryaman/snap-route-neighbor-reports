@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { publicReportsQuery } from "@/lib/queries";
+import { isActive, isBreached, isOriginal, publicReportsQuery } from "@/lib/queries";
 import { IssuesMap } from "@/components/LazyMaps";
 import { EmptyState, SeverityBadge, StatusBadge } from "@/components/civic";
 
@@ -20,11 +20,10 @@ export const Route = createFileRoute("/")({
 function Home() {
   const { data = [], isLoading } = useQuery(publicReportsQuery);
   const total = data.length;
-  const open = data.filter((r) => r.status === "open" || r.status === "in_progress" || r.status === "escalated").length;
-  const resolved = data.filter((r) => r.status === "resolved").length;
-  const breached = data.filter(
-    (r) => r.sla_deadline && r.status !== "resolved" && r.status !== "rejected" && new Date(r.sla_deadline) < new Date(),
-  ).length;
+  const issues = data.filter(isOriginal);
+  const open = issues.filter(isActive).length;
+  const resolved = issues.filter((r) => r.status === "resolved").length;
+  const breached = issues.filter((r) => isBreached(r)).length;
 
   return (
     <div>

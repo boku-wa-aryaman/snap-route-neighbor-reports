@@ -1,7 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
-import { publicReportsQuery, type PublicReport } from "@/lib/queries";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
+import { useMemo, useState } from "react";
+import { isActive, isBreached, isOriginal, publicReportsQuery } from "@/lib/queries";
+import { ANY_LOCATION, LEVEL_LABEL, locationOf, matchesLocation, type LocLevel } from "@/lib/location";
+import { LevelToggle, LocationFilter, LocationTable, useLocationGroups } from "@/components/LocationFilter";
 import { CATEGORIES, CATEGORY_LABELS, SEVERITY_LABEL } from "@/lib/severity";
 import { IssuesMap } from "@/components/LazyMaps";
 import { EmptyState, SeverityBadge, SlaCountdown, StatusBadge } from "@/components/civic";
@@ -11,9 +16,6 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — Civic Pulse" }] }),
   component: Dashboard,
 });
-
-const isActive = (r: PublicReport) => r.status !== "resolved" && r.status !== "rejected";
-const isOriginal = (r: PublicReport) => !r.duplicate_of;
 
 function Stat({ label, value, hint, tone }: { label: string; value: string | number; hint?: string | undefined; tone?: string }) {
   return (
@@ -39,13 +41,35 @@ function Bar({ label, value, max, cls }: { label: string; value: number; max: nu
 
 function Dashboard() {
   const { isStaff, loading } = useAuth();
-  const { data = [], isLoading } = useQuery({ ...publicReportsQuery, refetchInterval: 20_000 });
+  const { data: all = [], isLoading } = useQuery(publicReportsQuery);
+  const qc = useQueryClient();
+  // Officials and admins may both do this (set_report_status checks the role server-side).
+  async function setStatus(id: string, ticket: string, status: "in_progress" | "resolved") {
+    const { error } = await supabase.rpc("set_report_status", { _report_id: id, _status: status });
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success(`${ticket} → ${status === "resolved" ? "Resolved" : "In progress"}`);
+    qc.invalidateQueries();
+  }
+  const [loc, setLoc] = useState(ANY_LOCATION);
+  const [level, setLevel] = useState<LocLevel>("city");
+  const locs = useMemo(() => all.filter(isOriginal).map(locationOf), [all]);
+  // Everything below, including the map and charts, follows the location filter.
+  const data = useMemo(() => all.filter((r) => matchesLocation(locationOf(r), loc)), [all, loc]);
+  const groups = useLocationGroups(data.filter(isOriginal), level, (r) => ({
+    loc: locationOf(r),
+    active: isActive(r),
+    breached: isBreached(r),
+    resolved: r.status === "resolved",
+  }));
 
   const s = useMemo(() => {
     const issues = data.filter(isOriginal);
     const active = issues.filter(isActive);
     const now = Date.now();
-    const breached = active.filter((r) => r.sla_deadline && new Date(r.sla_deadline).getTime() < now);
+    const breached = active.filter((r) => isBreached(r, now));
     const resolved = issues.filter((r) => r.status === "resolved");
     const resolveHours = resolved.map((r) => (+new Date(r.updated_at!) - +new Date(r.created_at!)) / 3600_000);
     const byCat = CATEGORIES.map((c) => [c, active.filter((r) => r.category === c).length] as const).filter(([, n]) => n > 0);
@@ -56,7 +80,7 @@ function Dashboard() {
       const d = depts.get(k) ?? { open: 0, breached: 0, resolved: 0 };
       if (isActive(r)) d.open++;
       if (r.status === "resolved") d.resolved++;
-      if (isActive(r) && r.sla_deadline && new Date(r.sla_deadline).getTime() < now) d.breached++;
+      if (isBreached(r, now)) d.breached++;
       depts.set(k, d);
     }
     const days = [...Array(14)].map((_, i) => {
@@ -89,13 +113,20 @@ function Dashboard() {
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h1 className="text-3xl font-semibold">Operations dashboard</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Aggregate view for the teams fixing issues. Live from filed reports, refreshed every 20 seconds.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Aggregate view for the teams fixing issues. Live from filed reports, refreshed every 15 seconds.</p>
         </div>
         <Link to="/admin" className="text-sm text-primary underline-offset-2 hover:underline">Open review queue →</Link>
       </div>
 
+      {all.length > 0 && (
+        <div className="mt-5 flex flex-wrap items-center gap-2">
+          <span className="text-sm text-muted-foreground">Location</span>
+          <LocationFilter locs={locs} value={loc} onChange={setLoc} />
+        </div>
+      )}
+
       {!isLoading && data.length === 0 ? (
-        <div className="mt-8"><EmptyState title="No reports yet.">Numbers appear here as soon as citizens file reports.</EmptyState></div>
+        <div className="mt-8"><EmptyState title={all.length ? "No reports in this location." : "No reports yet."}>Numbers appear here as soon as citizens file reports.</EmptyState></div>
       ) : (
         <>
           <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
@@ -131,6 +162,14 @@ function Dashboard() {
               </section>
             </div>
           </div>
+
+          <section className="mt-8 rounded-md border bg-card shadow-card">
+            <div className="flex flex-wrap items-center justify-between gap-2 p-4 pb-2">
+              <h2 className="font-semibold">By location <span className="text-xs font-normal text-muted-foreground">grouped by {LEVEL_LABEL[level].toLowerCase()}, click a row to focus on it</span></h2>
+              <LevelToggle value={level} onChange={setLevel} />
+            </div>
+            <LocationTable groups={groups} level={level} filter={loc} onPick={setLoc} />
+          </section>
 
           <div className="mt-8 grid gap-6 lg:grid-cols-2">
             <section className="rounded-md border bg-card p-4 shadow-card">
@@ -169,7 +208,7 @@ function Dashboard() {
           <div className="mt-3 overflow-x-auto rounded-md border bg-card shadow-card">
             <table className="w-full text-sm">
               <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <tr><th className="p-3">Ticket</th><th className="p-3">Issue</th><th className="p-3">Severity</th><th className="p-3">Status</th><th className="p-3">Department</th><th className="p-3">SLA</th></tr>
+                <tr><th className="p-3">Ticket</th><th className="p-3">Issue</th><th className="p-3">Severity</th><th className="p-3">Status</th><th className="p-3">Department</th><th className="p-3">SLA</th><th className="p-3 text-right">Action</th></tr>
               </thead>
               <tbody className="divide-y">
                 {s.urgent.map((r) => (
@@ -180,6 +219,12 @@ function Dashboard() {
                     <td className="p-3"><StatusBadge status={r.status!} /></td>
                     <td className="p-3 text-xs">{r.department_name}</td>
                     <td className="p-3"><SlaCountdown deadline={r.sla_deadline} status={r.status!} /></td>
+                    <td className="p-3">
+                      <div className="flex justify-end gap-1.5">
+                        {r.status !== "in_progress" && <Button size="sm" variant="outline" onClick={() => setStatus(r.id!, r.ticket_id!, "in_progress")}>Start</Button>}
+                        <Button size="sm" onClick={() => setStatus(r.id!, r.ticket_id!, "resolved")}>Resolve</Button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

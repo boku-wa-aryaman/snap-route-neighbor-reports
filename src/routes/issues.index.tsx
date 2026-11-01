@@ -1,7 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { publicReportsQuery } from "@/lib/queries";
+import { isActive, isBreached, isOriginal, publicReportsQuery } from "@/lib/queries";
+import { ANY_LOCATION, locationOf, matchesLocation, type LocLevel } from "@/lib/location";
+import { LevelToggle, LocationFilter, LocationTable, useLocationGroups } from "@/components/LocationFilter";
 import { CATEGORIES, CATEGORY_LABELS } from "@/lib/severity";
 import { IssuesMap } from "@/components/LazyMaps";
 import { EmptyState, SeverityBadge, SlaCountdown, StatusBadge } from "@/components/civic";
@@ -22,27 +24,25 @@ function Issues() {
   const { data = [], isLoading } = useQuery(publicReportsQuery);
   const [cat, setCat] = useState("all");
   const [status, setStatus] = useState("active");
+  const [loc, setLoc] = useState(ANY_LOCATION);
+  const [level, setLevel] = useState<LocLevel>("city");
+  const issues = useMemo(() => data.filter(isOriginal), [data]);
+  const locs = useMemo(() => issues.map(locationOf), [issues]);
+  const inLocation = useMemo(() => issues.filter((r) => matchesLocation(locationOf(r), loc)), [issues, loc]);
   const rows = useMemo(
     () =>
-      data
+      inLocation
         .filter((r) => cat === "all" || r.category === cat)
-        .filter((r) => status === "all" || (status === "active" ? r.status !== "resolved" && r.status !== "rejected" : r.status === status))
+        .filter((r) => status === "all" || (status === "active" ? isActive(r) : r.status === status))
         .sort((a, b) => (b.severity ?? 0) - (a.severity ?? 0) || +new Date(b.created_at!) - +new Date(a.created_at!)),
-    [data, cat, status],
+    [inLocation, cat, status],
   );
-
-  const byArea = useMemo(() => {
-    const m = new Map<string, { n: number; open: number; sev: number }>();
-    for (const r of data) {
-      const k = [r.area_name, r.city].filter(Boolean).join(", ") || "Unknown area";
-      const v = m.get(k) ?? { n: 0, open: 0, sev: 0 };
-      v.n++;
-      if (r.status !== "resolved" && r.status !== "rejected") v.open++;
-      v.sev += r.severity ?? 0;
-      m.set(k, v);
-    }
-    return [...m.entries()].sort((a, b) => b[1].open - a[1].open).slice(0, 8);
-  }, [data]);
+  const groups = useLocationGroups(inLocation, level, (r) => ({
+    loc: locationOf(r),
+    active: isActive(r),
+    breached: isBreached(r),
+    resolved: r.status === "resolved",
+  }));
 
   const sel = "h-9 rounded-sm border bg-card px-2 text-sm";
   return (
@@ -58,7 +58,7 @@ function Issues() {
             className="mt-6 h-[380px] rounded-md border"
             pins={rows.map((r) => ({ ticket_id: r.ticket_id!, lat: r.lat!, lon: r.lon!, severity: r.severity ?? 1, ai_summary: r.ai_summary, status: r.status! }))}
           />
-          <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_280px]">
+          <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_340px]">
             <div>
               <div className="flex flex-wrap gap-2">
                 <select className={sel} value={cat} onChange={(e) => setCat(e.target.value)} aria-label="Category">
@@ -73,6 +73,7 @@ function Issues() {
                   <option value="escalated">Escalated</option>
                   <option value="resolved">Resolved</option>
                 </select>
+                <LocationFilter locs={locs} value={loc} onChange={setLoc} />
                 <span className="self-center text-sm text-muted-foreground">{rows.length} shown</span>
               </div>
               <div className="mt-4 overflow-x-auto rounded-md border bg-card shadow-card">
@@ -97,12 +98,13 @@ function Issues() {
               </div>
             </div>
             <aside>
-              <h2 className="text-lg font-semibold">By area</h2>
-              <ul className="mt-3 divide-y rounded-md border bg-card text-sm">
-                {byArea.map(([k, v]) => (
-                  <li key={k} className="flex justify-between gap-2 p-3"><span>{k}</span><span className="font-mono text-xs text-muted-foreground">{v.open} open / {v.n}</span></li>
-                ))}
-              </ul>
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-lg font-semibold">By location</h2>
+                <LevelToggle value={level} onChange={setLevel} />
+              </div>
+              <div className="mt-3 overflow-hidden rounded-md border bg-card">
+                <LocationTable groups={groups} level={level} filter={loc} onPick={setLoc} />
+              </div>
             </aside>
           </div>
         </>

@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -36,6 +37,7 @@ async function processImage(file: File): Promise<Blob> {
 
 function ReportPage() {
   const submit = useServerFn(submitReport);
+  const queryClient = useQueryClient();
   const [photo, setPhoto] = useState<Blob | null>(null);
   const [clf, setClf] = useState<ClassifierResult | null>(null);
   const [checking, setChecking] = useState(false);
@@ -93,7 +95,11 @@ function ReportPage() {
       setBusy("AI is reviewing your report and fetching live local data…");
       const res = await submit({ data: { description: desc, photoPath, lat: loc.lat, lon: loc.lon, isAnonymous: anon } });
       if (!res.ok) toast.error(res.error);
-      else setResult({ ticketId: res.ticketId, duplicateOf: res.duplicateOf });
+      else {
+        setResult({ ticketId: res.ticketId, duplicateOf: res.duplicateOf });
+        // The new ticket (or the duplicate count it bumped) should show everywhere right away.
+        queryClient.invalidateQueries();
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Something went wrong");
     } finally {
