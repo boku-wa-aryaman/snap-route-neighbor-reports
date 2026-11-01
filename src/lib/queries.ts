@@ -37,3 +37,16 @@ export const departmentsQuery = queryOptions({
   queryKey: ["departments"],
   queryFn: async () => (await supabase.from("departments").select("*").order("name")).data ?? [],
 });
+
+export const publicChangesQuery = queryOptions({
+  queryKey: ["public_changes"],
+  queryFn: async () => {
+    const { data, error } = await supabase
+      .from("public_changes")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) throw error;
+    return data ?? [];
+  },
+});

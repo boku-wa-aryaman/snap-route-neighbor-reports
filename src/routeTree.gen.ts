@@ -12,8 +12,11 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthRouteImport } from './routes/auth'
+import { Route as ChangesRouteImport } from './routes/changes'
+import { Route as HowItWorksRouteImport } from './routes/how-it-works'
 import { Route as AuthenticatedReportRouteImport } from './routes/_authenticated/report'
 import { Route as IssuesIndexRouteImport } from './routes/issues.index'
+import { Route as IssuesTicketIdRouteImport } from './routes/issues.$ticketId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -29,6 +32,16 @@ const AuthRoute = AuthRouteImport.update({
   path: '/auth',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ChangesRoute = ChangesRouteImport.update({
+  id: '/changes',
+  path: '/changes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HowItWorksRoute = HowItWorksRouteImport.update({
+  id: '/how-it-works',
+  path: '/how-it-works',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedReportRoute = AuthenticatedReportRouteImport.update({
   id: '/report',
   path: '/report',
@@ -39,17 +52,28 @@ const IssuesIndexRoute = IssuesIndexRouteImport.update({
   path: '/issues/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const IssuesTicketIdRoute = IssuesTicketIdRouteImport.update({
+  id: '/issues/$ticketId',
+  path: '/issues/$ticketId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/changes': typeof ChangesRoute
+  '/how-it-works': typeof HowItWorksRoute
   '/report': typeof AuthenticatedReportRoute
+  '/issues/$ticketId': typeof IssuesTicketIdRoute
   '/issues/': typeof IssuesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/changes': typeof ChangesRoute
+  '/how-it-works': typeof HowItWorksRoute
   '/report': typeof AuthenticatedReportRoute
+  '/issues/$ticketId': typeof IssuesTicketIdRoute
   '/issues': typeof IssuesIndexRoute
 }
 export interface FileRoutesById {
@@ -57,20 +81,40 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/changes': typeof ChangesRoute
+  '/how-it-works': typeof HowItWorksRoute
   '/_authenticated/report': typeof AuthenticatedReportRoute
+  '/issues/$ticketId': typeof IssuesTicketIdRoute
   '/issues/': typeof IssuesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/report' | '/issues/'
+  fullPaths:
+    | '/'
+    | '/auth'
+    | '/changes'
+    | '/how-it-works'
+    | '/report'
+    | '/issues/$ticketId'
+    | '/issues/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/report' | '/issues'
+  to:
+    | '/'
+    | '/auth'
+    | '/changes'
+    | '/how-it-works'
+    | '/report'
+    | '/issues/$ticketId'
+    | '/issues'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/changes'
+    | '/how-it-works'
     | '/_authenticated/report'
+    | '/issues/$ticketId'
     | '/issues/'
   fileRoutesById: FileRoutesById
 }
@@ -78,6 +122,9 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ChangesRoute: typeof ChangesRoute
+  HowItWorksRoute: typeof HowItWorksRoute
+  IssuesTicketIdRoute: typeof IssuesTicketIdRoute
   IssuesIndexRoute: typeof IssuesIndexRoute
 }
 
@@ -104,6 +151,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/changes': {
+      id: '/changes'
+      path: '/changes'
+      fullPath: '/changes'
+      preLoaderRoute: typeof ChangesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/how-it-works': {
+      id: '/how-it-works'
+      path: '/how-it-works'
+      fullPath: '/how-it-works'
+      preLoaderRoute: typeof HowItWorksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/report': {
       id: '/_authenticated/report'
       path: '/report'
@@ -116,6 +177,13 @@ declare module '@tanstack/react-router' {
       path: '/issues'
       fullPath: '/issues/'
       preLoaderRoute: typeof IssuesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/issues/$ticketId': {
+      id: '/issues/$ticketId'
+      path: '/issues/$ticketId'
+      fullPath: '/issues/$ticketId'
+      preLoaderRoute: typeof IssuesTicketIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -136,6 +204,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  ChangesRoute: ChangesRoute,
+  HowItWorksRoute: HowItWorksRoute,
+  IssuesTicketIdRoute: IssuesTicketIdRoute,
   IssuesIndexRoute: IssuesIndexRoute,
 }
 export const routeTree = rootRouteImport
