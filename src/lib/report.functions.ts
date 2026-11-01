@@ -168,7 +168,7 @@ Civic Pulse (on behalf of the reporting citizen)`;
       return { ok: false as const, error: "Could not save the report. Please try again." };
     }
     if (original) {
-      await supabaseAdmin.rpc("increment_report_count" as never, { _id: original.id } as never);
+      await supabaseAdmin.rpc("increment_report_count", { _id: original.id });
     }
     return { ok: true as const, ticketId: row.ticket_id, duplicateOf: original?.ticket_id ?? null };
   });
