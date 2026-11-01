@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { PickerMap } from "@/components/LazyMaps";
+import { CLASSIFIER_LABEL_TEXT, classifyImage, type ClassifierResult } from "@/lib/classifier";
 
 export const Route = createFileRoute("/_authenticated/report")({
   head: () => ({
@@ -35,13 +36,38 @@ async function processImage(file: File): Promise<Blob> {
 
 function ReportPage() {
   const submit = useServerFn(submitReport);
-  const [file, setFile] = useState<File | null>(null);
+  const [photo, setPhoto] = useState<Blob | null>(null);
+  const [clf, setClf] = useState<ClassifierResult | null>(null);
+  const [checking, setChecking] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [desc, setDesc] = useState("");
   const [loc, setLoc] = useState<{ lat: number; lon: number } | null>(null);
   const [anon, setAnon] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ ticketId: string; duplicateOf: string | null } | null>(null);
+
+  // A photo the classifier is confident is irrelevant needs a description
+  // before it can be filed, so a real complaint is never silently thrown away.
+  const blocked = clf !== null && !clf.is_civic && desc.trim().length < 10;
+
+  async function onPick(f: File | null) {
+    setClf(null);
+    setPhoto(null);
+    setPreview(null);
+    if (!f) return;
+    if (f.size > 15 * 1024 * 1024) return void toast.error("Photo is too large (max 15 MB).");
+    try {
+      const blob = await processImage(f);
+      setPhoto(blob);
+      setPreview(URL.createObjectURL(blob));
+      setChecking(true);
+      setClf(await classifyImage(blob));
+    } catch {
+      toast.error("Couldn't read that photo. Try another one.");
+    } finally {
+      setChecking(false);
+    }
+  }
 
   function locate() {
     if (!navigator.geolocation) return void toast.error("Location not available. Tap the map instead.");
@@ -57,12 +83,11 @@ function ReportPage() {
     if (!loc) return void toast.error("Add a location first.");
     try {
       let photoPath: string | null = null;
-      if (file) {
+      if (photo) {
         setBusy("Uploading photo…");
-        const blob = await processImage(file);
         const { data: u } = await supabase.auth.getUser();
         photoPath = `${u.user!.id}/${crypto.randomUUID()}.jpg`;
-        const { error } = await supabase.storage.from("report-photos").upload(photoPath, blob, { contentType: "image/jpeg" });
+        const { error } = await supabase.storage.from("report-photos").upload(photoPath, photo, { contentType: "image/jpeg" });
         if (error) throw new Error(error.message);
       }
       setBusy("AI is reviewing your report and fetching live local data…");
@@ -86,7 +111,7 @@ function ReportPage() {
         )}
         <div className="mt-8 flex justify-center gap-3">
           <Button asChild><Link to="/issues/$ticketId" params={{ ticketId: result.ticketId }}>View public ticket</Link></Button>
-          <Button variant="outline" onClick={() => { setResult(null); setFile(null); setPreview(null); setDesc(""); }}>Report another</Button>
+          <Button variant="outline" onClick={() => { setResult(null); setPhoto(null); setClf(null); setPreview(null); setDesc(""); }}>Report another</Button>
         </div>
       </div>
     );
@@ -106,14 +131,22 @@ function ReportPage() {
           accept="image/jpeg,image/png,image/webp,image/heic"
           capture="environment"
           className="block w-full text-sm file:mr-3 file:rounded-sm file:border-0 file:bg-primary file:px-3 file:py-2 file:text-primary-foreground"
-          onChange={(e) => {
-            const f = e.target.files?.[0] ?? null;
-            if (f && f.size > 15 * 1024 * 1024) return void toast.error("Photo is too large (max 15 MB).");
-            setFile(f);
-            setPreview(f ? URL.createObjectURL(f) : null);
-          }}
+          onChange={(e) => void onPick(e.target.files?.[0] ?? null)}
         />
         {preview && <img src={preview} alt="Selected" className="max-h-64 rounded-md border object-cover" />}
+        {checking && <p className="text-xs text-muted-foreground">Checking photo…</p>}
+        {clf?.is_civic && (
+          <p className="text-sm">
+            Looks like <strong>{CLASSIFIER_LABEL_TEXT[clf.best_civic_label]}</strong>{" "}
+            <span className="text-muted-foreground">({Math.round(clf.confidence * 100)}% sure)</span>
+            {clf.needs_review && <span className="ml-2 text-amber-600">a person will double-check</span>}
+          </p>
+        )}
+        {clf && !clf.is_civic && (
+          <p className="text-sm text-destructive">
+            This photo doesn't look like a public civic issue. Add a description below so a person can check it.
+          </p>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -135,7 +168,7 @@ function ReportPage() {
         <span><strong>Report anonymously.</strong> Your name is never shown publicly or to officials.</span>
       </label>
 
-      <Button type="submit" size="lg" className="w-full" disabled={!!busy}>{busy ?? "Submit report"}</Button>
+      <Button type="submit" size="lg" className="w-full" disabled={!!busy || blocked}>{busy ?? "Submit report"}</Button>
     </form>
   );
 }

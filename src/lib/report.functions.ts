@@ -11,6 +11,14 @@ import {
   slaDeadline,
   type Category,
 } from "./severity";
+import {
+  PHOTO_DUPLICATE_SIM,
+  categoryForClassifierLabel,
+  classifyImage,
+  cosine,
+  disagrees,
+  storedEmbedding,
+} from "./classifier";
 
 const Input = z.object({
   description: z.string().max(2000).default(""),
@@ -49,11 +57,24 @@ export const submitReport = createServerFn({ method: "POST" })
     if ((count ?? 0) >= 5) return { ok: false as const, error: "Limit reached: 5 reports per hour. Please try later." };
 
     let imageDataUrl: string | null = null;
+    let photo: Blob | null = null;
     if (data.photoPath) {
       const { data: blob, error } = await supabaseAdmin.storage.from("report-photos").download(data.photoPath);
       if (error || !blob) return { ok: false as const, error: "Could not read uploaded photo." };
+      photo = blob;
       imageDataUrl = `data:${blob.type || "image/jpeg"};base64,${toBase64(await blob.arrayBuffer())}`;
     }
+
+    // Gate: skip the VLM entirely for a photo-only report the classifier is
+    // confident is not civic. When there is a description, the text gets the
+    // final say — the classifier sees only the picture.
+    const clf = photo ? await classifyImage(photo) : null;
+    if (clf && !clf.is_civic && data.description.trim().length < 10)
+      return {
+        ok: false as const,
+        error:
+          "This photo doesn't look like a public civic issue. Add a short description of the problem so a person can check it.",
+      };
 
     const { extractReport } = await import("./ai.server");
     const { enrich, osmRoadToType } = await import("./enrich.server");
@@ -77,6 +98,18 @@ export const submitReport = createServerFn({ method: "POST" })
         reviewReasons.push(`AI confidence ${ai.data.confidence.toFixed(2)} below ${REVIEW_CONFIDENCE_THRESHOLD}`);
     } else {
       reviewReasons.push(ai.error);
+      // VLM unavailable: use the classifier's category instead of falling back to "other".
+      if (clf?.is_civic) category = categoryForClassifierLabel(clf.best_civic_label);
+    }
+
+    // Cross-check. The classifier only sees the photo, the VLM also reads the text,
+    // so a disagreement is a signal for a human — not an automatic override.
+    if (clf) {
+      const pct = `${Math.round(clf.confidence * 100)}%`;
+      if (ai.ok && disagrees(category, clf))
+        reviewReasons.push(`Classifier saw ${clf.best_civic_label} (${pct}) but the AI said ${category}`);
+      else if (clf.needs_review) reviewReasons.push(`Classifier unsure: ${clf.best_civic_label} (${pct})`);
+      if (ai.ok && !clf.is_civic) reviewReasons.push("Classifier thought the photo may not show a civic issue");
     }
 
     const osmRoad = osmRoadToType(live.nearest_road_class);
@@ -101,7 +134,7 @@ export const submitReport = createServerFn({ method: "POST" })
     const box = 0.0006;
     const { data: nearby } = await supabaseAdmin
       .from("reports")
-      .select("id, ticket_id, lat, lon, report_count")
+      .select("id, ticket_id, lat, lon, report_count, ai_json")
       .eq("category", category)
       .is("deleted_at", null)
       .is("duplicate_of", null)
@@ -109,10 +142,35 @@ export const submitReport = createServerFn({ method: "POST" })
       .gte("created_at", new Date(Date.now() - 30 * 86400_000).toISOString())
       .gte("lat", data.lat - box).lte("lat", data.lat + box)
       .gte("lon", data.lon - box).lte("lon", data.lon + box);
-    const original = (nearby ?? []).find((r) => distanceMeters(r, data) <= 50) ?? null;
+    // Prefer a candidate whose stored photo embedding matches (same scene);
+    // otherwise fall back to the nearest same-category report, as before.
+    const candidates = (nearby ?? [])
+      .map((r) => {
+        const stored = storedEmbedding(r.ai_json);
+        return {
+          row: r,
+          sim: clf && stored ? cosine(clf.embedding, stored) : -1,
+          distance: distanceMeters(r, data),
+        };
+      })
+      .filter((c) => c.distance <= 50)
+      .sort((a, b) => b.sim - a.sim || a.distance - b.distance);
+    const sameScene = candidates.find((c) => c.sim >= PHOTO_DUPLICATE_SIM);
+    const original = (sameScene ?? candidates[0])?.row ?? null;
 
     const deadline = slaDeadline(sev.score);
     const summary = ai.ok ? ai.data.public_summary : data.description.slice(0, 200);
+    // Kept with the report so later reports at the same spot can be compared by photo.
+    const classifierRecord = clf
+      ? {
+          label: clf.label,
+          confidence: clf.confidence,
+          is_civic: clf.is_civic,
+          needs_review: clf.needs_review,
+          model: clf.model,
+          embedding: clf.embedding,
+        }
+      : null;
     const place = [live.area_name, live.city, live.state].filter(Boolean).join(", ") || `${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}`;
     const complaint = `To,
 The Officer In-Charge,
@@ -144,7 +202,9 @@ Civic Pulse (on behalf of the reporting citizen)`;
         category,
         description: data.description || null,
         ai_summary: summary,
-        ai_json: ai.ok ? ai.data : { error: ai.error },
+        ai_json: ai.ok
+          ? { ...ai.data, classifier: classifierRecord }
+          : { error: ai.error, classifier: classifierRecord },
         ai_confidence: ai.ok ? ai.data.confidence : null,
         severity: sev.score,
         severity_reasons: sev.reasons,
