@@ -41,12 +41,12 @@ function AuthPage() {
         options: { emailRedirectTo: window.location.origin + target, data: { display_name: name } },
       });
       setBusy(false);
-      if (error) return toast.error(error.message);
+      if (error) return void toast.error(error.message);
       setSent(true);
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       setBusy(false);
-      if (error) return toast.error(error.message);
+      if (error) return void toast.error(error.message);
       navigate({ to: target });
     }
   }

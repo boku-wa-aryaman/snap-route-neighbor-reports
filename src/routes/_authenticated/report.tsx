@@ -44,7 +44,7 @@ function ReportPage() {
   const [result, setResult] = useState<{ ticketId: string; duplicateOf: string | null } | null>(null);
 
   function locate() {
-    if (!navigator.geolocation) return toast.error("Location not available. Tap the map instead.");
+    if (!navigator.geolocation) return void toast.error("Location not available. Tap the map instead.");
     navigator.geolocation.getCurrentPosition(
       (p) => setLoc({ lat: p.coords.latitude, lon: p.coords.longitude }),
       () => toast.error("Couldn't get your location. Tap the map to place a pin."),
@@ -54,7 +54,7 @@ function ReportPage() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!loc) return toast.error("Add a location first.");
+    if (!loc) return void toast.error("Add a location first.");
     try {
       let photoPath: string | null = null;
       if (file) {
@@ -108,7 +108,7 @@ function ReportPage() {
           className="block w-full text-sm file:mr-3 file:rounded-sm file:border-0 file:bg-primary file:px-3 file:py-2 file:text-primary-foreground"
           onChange={(e) => {
             const f = e.target.files?.[0] ?? null;
-            if (f && f.size > 15 * 1024 * 1024) return toast.error("Photo is too large (max 15 MB).");
+            if (f && f.size > 15 * 1024 * 1024) return void toast.error("Photo is too large (max 15 MB).");
             setFile(f);
             setPreview(f ? URL.createObjectURL(f) : null);
           }}
